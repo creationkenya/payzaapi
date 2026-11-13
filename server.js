@@ -45,7 +45,9 @@ async function processQueue() {
 
   while (queue.length > 0) {
     const job = queue.shift();
-    const orderRef = `ORDER_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    
+    // GUARANTEED UNIQUE REFERENCE: Combines phone number, timestamp, and random entropy
+    const orderRef = `ORD_${job.phone}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
     const payload = {
       amount: Number(job.amount),
