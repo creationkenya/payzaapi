@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payza STK Push Bot</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      max-width: 720px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    .card {
+      background: #1e293b;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      margin-bottom: 24px;
+    }
+    h1 { margin-top: 0; font-size: 1.5rem; color: #38bdf8; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.9rem; }
+    input, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #fff;
+      font-size: 1rem;
+    }
+    .row { display: flex; gap: 12px; }
+    .row > div { flex: 1; }
+    button {
+      background: #0284c7;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #0369a1; }
+    button.danger { background: #dc2626; margin-left: 8px; }
+    button.danger:hover { background: #b91c1c; }
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      background: #0f172a;
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+    }
+    .log-box {
+      background: #020617;
+      padding: 14px;
+      border-radius: 8px;
+      height: 280px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.85rem;
+    }
+    .log-entry { margin-bottom: 8px; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }
+    .SUCCESS { color: #4ade80; }
+    .FAILED { color: #f87171; }
+    .SKIPPED { color: #fbbf24; }
+    .WEBHOOK { color: #38bdf8; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h1>Payza Batch STK Bot (5s Interval)</h1>
+    
+    <div class="row">
+      <div>
+        <label for="amount">Amount (KES)</label>
+        <input type="number" id="amount" value="2450" min="1" required />
+      </div>
+      <div>
+        <label for="name">Default Customer Name</label>
+        <input type="text" id="name" value="Jane Wanjiku" />
+      </div>
+      <div>
+        <label for="email">Default Email</label>
+        <input type="email" id="email" value="jane@example.com" />
+      </div>
+    </div>
+
+    <label for="phones">Mobile Numbers (one per line or comma-separated)</label>
+    <textarea id="phones" rows="5" placeholder="254712345678&#10;0722000000&#10;0110123456"></textarea>
+
+    <button onclick="startBot()">Start Sending STK Requests</button>
+    <button class="danger" onclick="clearQueue()">Stop / Clear Queue</button>
+  </div>
+
+  <div class="card">
+    <div class="status-bar">
+      <span>Status: <strong id="botState">Idle</strong></span>
+      <span>Pending in Queue: <strong id="queueCount">0</strong></span>
+    </div>
+    <div class="log-box" id="logBox">Waiting for tasks...</div>
+  </div>
+
+  <script>
+    async function startBot() {
+      const rawText = document.getElementById('phones').value;
+      const amount = document.getElementById('amount').value;
+      const name = document.getElementById('name').value;
+      const email = document.getElementById('email').value;
+
+      const phones = rawText
+        .split(/[\n,]+/)
+        .map(p => p.trim())
+        .filter(Boolean);
+
+      if (phones.length === 0) {
+        alert('Please enter at least one phone number.');
+        return;
+      }
+
+      const res = await fetch('/api/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phones, amount, name, email })
+      });
+
+      const data = await res.json();
+      if (data.error) {
+        alert(data.error);
+      } else {
+        document.getElementById('phones').value = '';
+        fetchStatus();
+      }
+    }
+
+    async function clearQueue() {
+      await fetch('/api/clear', { method: 'POST' });
+      fetchStatus();
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        document.getElementById('botState').textContent = data.isProcessing ? 'Running (5s delay)...' : 'Idle';
+        document.getElementById('queueCount').textContent = data.remaining;
+
+        const logBox = document.getElementById('logBox');
+        if (data.logs.length > 0) {
+          logBox.innerHTML = data.logs.map(l => `
+            <div class="log-entry">
+              <span>[${l.time}]</span>
+              <strong class="${l.status}">[${l.status}]</strong>
+              <span>${l.phone}:</span>
+              <span>${l.message}</span>
+            </div>
+          `).join('');
+        }
+      } catch (e) {
+        console.error('Status poll error', e);
+      }
+    }
+
+    // Refresh UI logs every 2 seconds
+    setInterval(fetchStatus, 2000);
+    fetchStatus();
+  </script>
+</body>
+</html>
