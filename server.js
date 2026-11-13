@@ -38,7 +38,7 @@ function addLog(phone, status, message) {
   if (logs.length > 100) logs.pop(); // Keep last 100 logs
 }
 
-// Background Worker: Processes 1 request every 5 seconds
+// Background Worker: Processes 1 request every 5 seconds with 502/504 retry handling
 async function processQueue() {
   if (isProcessing || queue.length === 0) return;
   isProcessing = true;
@@ -62,20 +62,39 @@ async function processQueue() {
       }
     };
 
-    try {
-      const response = await axios.post('https://payzaapi.co.ke/api/v1/pay', payload, {
-        headers: {
-          'X-Public-Key': process.env.PAYZA_PUBLIC_KEY,
-          'X-Secret-Key': process.env.PAYZA_SECRET_KEY,
-          'Content-Type': 'application/json'
-        },
-        timeout: 15000
-      });
+    let retries = 0;
+    const maxRetries = 3;
+    let success = false;
 
-      addLog(job.phone, 'SUCCESS', `STK Sent (Ref: ${orderRef}) - ${JSON.stringify(response.data)}`);
-    } catch (error) {
-      const errDetail = error.response ? JSON.stringify(error.response.data) : error.message;
-      addLog(job.phone, 'FAILED', errDetail);
+    // Retry loop for handling gateway 502/504 errors
+    while (retries <= maxRetries && !success) {
+      try {
+        const response = await axios.post('https://payzaapi.co.ke/api/v1/pay', payload, {
+          headers: {
+            'X-Public-Key': process.env.PAYZA_PUBLIC_KEY,
+            'X-Secret-Key': process.env.PAYZA_SECRET_KEY,
+            'Content-Type': 'application/json'
+          },
+          timeout: 15000
+        });
+
+        addLog(job.phone, 'SUCCESS', `STK Sent (Ref: ${orderRef}) - ${JSON.stringify(response.data)}`);
+        success = true;
+      } catch (error) {
+        const status = error.response ? error.response.status : null;
+        
+        // Handle Cloudflare 502 Bad Gateway or 504 Gateway Timeout
+        if ((status === 502 || status === 504) && retries < maxRetries) {
+          retries++;
+          addLog(job.phone, 'RETRY', `Gateway ${status} received. Waiting 60s before retry ${retries}/${maxRetries}...`);
+          await sleep(60000); // Respect Cloudflare retry_after window
+          continue;
+        }
+
+        const errDetail = error.response ? JSON.stringify(error.response.data) : error.message;
+        addLog(job.phone, 'FAILED', errDetail);
+        break;
+      }
     }
 
     // Wait 5 seconds before firing the next STK request if more items remain
@@ -109,7 +128,7 @@ app.post('/api/enqueue', (req, res) => {
   });
 
   queue.push(...validJobs);
-  processQueue(); // Start processing without blocking the HTTP response
+  processQueue(); 
 
   res.json({
     queued: validJobs.length,
@@ -140,7 +159,7 @@ app.post('/webhooks/payza', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Health check endpoint (useful for UptimeRobot & Render)
+// Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
